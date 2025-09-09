@@ -1,4 +1,6 @@
-Chess Game com Java e Ia
+Chess Game com Java e I.A
+
+
 Descrição
 Este é um jogo de xadrez funcional desenvolvido em Java, utilizando a biblioteca Swing para a interface gráfica. O projeto permite partidas tanto para dois jogadores locais (Player vs. Player) quanto para um jogador contra uma Inteligência Artificial (Player vs. AI) com múltiplos níveis de dificuldade.
 
