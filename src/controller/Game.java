@@ -1,22 +1,22 @@
+// ========================= src/controller/Game.java (CORRIGIDO) =========================
 package controller;
 
 import model.board.Board;
+import model.board.Move;
 import model.board.Position;
 import model.pieces.*;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.stream.Collectors;
 
 public class Game {
 
     private Board board;
     private boolean whiteToMove = true;
     private boolean gameOver = false;
-
-    private Position enPassantTarget = null;
-
-    // Histórico simples (ex.: "e2e4", "O-O")
+    private Move lastMove = null;
     private final List<String> history = new ArrayList<>();
 
     public Game() {
@@ -24,19 +24,16 @@ public class Game {
         setupPieces();
     }
 
-    // ==== API usada pela GUI ====
+    // ==== API PÚBLICA ====
 
     public Board board() { return board; }
-
     public boolean whiteToMove() { return whiteToMove; }
-
     public List<String> history() { return Collections.unmodifiableList(history); }
-
     public boolean isGameOver() { return gameOver; }
+    public Move getLastMove() { return lastMove; }
 
     public String getWinner() {
         if (!gameOver) return null;
-       
         return whiteToMove ? "Pretas" : "Brancas";
     }
 
@@ -45,134 +42,120 @@ public class Game {
         setupPieces();
         whiteToMove = true;
         gameOver = false;
-        enPassantTarget = null;
+        lastMove = null;
         history.clear();
     }
-
 
     public List<Position> legalMovesFrom(Position from) {
         if (gameOver) return List.of();
 
         Piece p = board.get(from);
-        if (p == null) return List.of();
-        if (p.isWhite() != whiteToMove) return List.of();
+        if (p == null || p.isWhite() != whiteToMove) return List.of();
         
-        return p.getPossibleMoves();
+        List<Position> pseudoLegalMoves = p.getPossibleMoves();
+        
+        return pseudoLegalMoves.stream()
+                .filter(to -> !moveResultsInCheck(from, to))
+                .collect(Collectors.toList());
     }
 
     public boolean isPromotion(Position from, Position to) {
         Piece p = board.get(from);
-        if (!(p instanceof Pawn)) return false;
-        if (p.isWhite()) return to.getRow() == 0;   
-        else              return to.getRow() == 7;  
-
+        return p instanceof Pawn && (p.isWhite() ? to.getRow() == 0 : to.getRow() == 7);
+    }
     
     public void move(Position from, Position to, Character promotion) {
         if (gameOver) return;
 
-        Piece p = board.get(from);
-        if (p == null || p.isWhite() != whiteToMove) return;
-
-        boolean isPawn = (p instanceof Pawn);
-
-        
-        boolean isPawnPromotion = isPawn && isPromotion(from, to);
-
-        boolean isKing = (p instanceof King);
-        int dCol = Math.abs(to.getColumn() - from.getColumn());
-        if (isKing && dCol == 2) {
-            int row = from.getRow();
-            board.set(to, p);
-            board.set(from, null);
-            if (to.getColumn() == 6) { 
-                Piece rook = board.get(new Position(row, 7));
-                board.set(new Position(row, 5), rook);
-                board.set(new Position(row, 7), null);
-                if (rook != null) rook.setMoved(true);
-                addHistory("O-O");
-            } else { 
-                Piece rook = board.get(new Position(row, 0));
-                board.set(new Position(row, 3), rook);
-                board.set(new Position(row, 0), null);
-                if (rook != null) rook.setMoved(true);
-                addHistory("O-O-O");
-            }
-            p.setMoved(true);
-            enPassantTarget = null;
-            whiteToMove = !whiteToMove;
+        List<Position> legalMoves = legalMovesFrom(from);
+        if (!legalMoves.contains(to)) {
+            System.err.println("Movimento ilegal tentado: " + from + " para " + to);
             return;
         }
 
-        
-        boolean isEnPassant = isPawn && to.equals(enPassantTarget) && from.getColumn() != to.getColumn() && board.get(to) == null;
-        if (isEnPassant) {
-            board.set(to, p);
-            board.set(from, null);
-            int dir = p.isWhite() ? 1 : -1;
-            board.set(new Position(to.getRow() + dir, to.getColumn()), null);
-            p.setMoved(true);
-            addHistory(coord(from) + "x" + coord(to) + " e.p.");
-            enPassantTarget = null;
-            whiteToMove = !whiteToMove;
-            return;
-        }
+        Piece movingPiece = board.get(from);
+        Piece capturedPiece = board.get(to);
+        boolean isPawnPromotion = isPromotion(from, to);
 
+        lastMove = new Move(from, to, movingPiece, capturedPiece, false, false, false, promotion);
         
-        Piece capturedBefore = board.get(to);
-        board.set(to, p);
+        board.set(to, movingPiece);
         board.set(from, null);
-        p.setMoved(true);
+        if (movingPiece != null) movingPiece.setMoved(true);
 
-   
-        if (isPawn && Math.abs(to.getRow() - from.getRow()) == 2) {
-            enPassantTarget = new Position((from.getRow() + to.getRow()) / 2, from.getColumn());
-        } else {
-            enPassantTarget = null;
-        }
-
-        // -------- PROMOÇÃO --------
-        if (promotion != null && isPawnPromotion) {
+        if (isPawnPromotion) {
             Piece newPiece = switch (Character.toUpperCase(promotion)) {
-                case 'R' -> new Rook(board, p.isWhite());
-                case 'B' -> new Bishop(board, p.isWhite());
-                case 'N' -> new Knight(board, p.isWhite());
-                default -> new Queen(board, p.isWhite());
+                case 'R' -> new Rook(board, movingPiece.isWhite());
+                case 'B' -> new Bishop(board, movingPiece.isWhite());
+                case 'N' -> new Knight(board, movingPiece.isWhite());
+                default -> new Queen(board, movingPiece.isWhite());
             };
-            newPiece.setMoved(true);
             board.set(to, newPiece);
         }
 
-        // -------- VERIFICA FIM DE JOGO --------
-        if (capturedBefore instanceof King) {
+        whiteToMove = !whiteToMove;
+        history.add(from.toString() + to.toString());
+
+        if (!hasAnyLegalMove(whiteToMove)) {
             gameOver = true;
         }
-
-        addHistory(coord(from) + (capturedBefore != null ? "x" : "-") + coord(to));
-
-        // Só passa o turno se o jogo não acabou neste lance
-        if (!gameOver) {
-            whiteToMove = !whiteToMove;
-        }
+    }
+    
+    public boolean inCheck(boolean isWhiteSide) {
+        Position kingPos = findKing(isWhiteSide);
+        if (kingPos == null) return false;
+        return isUnderAttack(kingPos, !isWhiteSide);
     }
 
-    /** Indica se o lado passado está em xeque (stub por enquanto). */
-    public boolean inCheck(boolean whiteSide) {
-        // Implementação completa exige varrer movimentos do oponente até o rei.
+    private boolean isUnderAttack(Position target, boolean attackingSideIsWhite) {
+        for (Piece p : board.pieces(attackingSideIsWhite)) {
+            if (p.getAttacks().contains(target)) {
+                return true;
+            }
+        }
         return false;
     }
 
-    private void addHistory(String moveStr) {
-        history.add(moveStr);
+    private Position findKing(boolean isWhite) {
+        for (int r = 0; r < 8; r++) {
+            for (int c = 0; c < 8; c++) {
+                Position pos = new Position(r, c);
+                Piece p = board.get(pos);
+                if (p instanceof King && p.isWhite() == isWhite) {
+                    return pos;
+                }
+            }
+        }
+        return null;
     }
 
-    private String coord(Position p) {
-        char file = (char) ('a' + p.getColumn());
-        int rank = 8 - p.getRow();
-        return "" + file + rank;
+    private boolean moveResultsInCheck(Position from, Position to) {
+        Board tempBoard = board.copy();
+        Piece p = tempBoard.get(from);
+        if (p == null) return false;
+
+        tempBoard.set(to, p);
+        tempBoard.set(from, null);
+        
+        Game tempGame = new Game();
+        tempGame.board = tempBoard;
+
+        return tempGame.inCheck(p.isWhite());
+    }
+    
+    private boolean hasAnyLegalMove(boolean isWhiteSide) {
+        for (Piece p : board.pieces(isWhiteSide)) {
+            List<Position> possibleMoves = p.getPossibleMoves();
+            for (Position to : possibleMoves) {
+                if (!moveResultsInCheck(p.getPosition(), to)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private void setupPieces() {
-        // Brancas
         board.placePiece(new Rook(board, true),   new Position(7, 0));
         board.placePiece(new Knight(board, true), new Position(7, 1));
         board.placePiece(new Bishop(board, true), new Position(7, 2));
@@ -184,7 +167,7 @@ public class Game {
         for (int c = 0; c < 8; c++) {
             board.placePiece(new Pawn(board, true), new Position(6, c));
         }
-        // Pretas
+
         board.placePiece(new Rook(board, false),   new Position(0, 0));
         board.placePiece(new Knight(board, false), new Position(0, 1));
         board.placePiece(new Bishop(board, false), new Position(0, 2));
